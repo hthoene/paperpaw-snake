@@ -298,7 +298,7 @@ impl Screen for Game {
             self.plan_next(cx);
         }
         cx.request_redraw();
-        cx.request_refresh(paperpaw_sdk::RefreshMode::Fast);
+        cx.request_refresh(paperpaw_sdk::RefreshMode::Mono);
     }
 
     fn draw(&mut self, canvas: &mut Canvas<'_>, env: &Env<'_>) {
