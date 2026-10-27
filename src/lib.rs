@@ -17,7 +17,7 @@ use paperpaw_sdk::setting::{Setting, Text};
 use paperpaw_sdk::ui::{self, UiStyle};
 use paperpaw_sdk::{
     ActionSpec, Arg, Canvas, Color, Command, Cx, Direction, Env, Gesture, GestureKind, Handled,
-    Id, Instant, Manifest, MenuEntry, Params, Plugin, Rect, RegisterError, Registrar, Screen, ScreenSpec,
+    Id, Manifest, MenuEntry, Params, Plugin, Rect, RegisterError, Registrar, Screen, ScreenSpec,
     SettingGroupSpec, SettingSpec, Version,
 };
 
@@ -151,9 +151,6 @@ struct Game {
     over: bool,
     started: bool,
     seed: u32,
-    /// When the next step is due: steps are counted from here, not from
-    /// when the last one was drawn, so drawing time does not add up.
-    due: Instant,
     /// The step time in milliseconds as set, told to the screen's mode.
     pace: u64,
 }
@@ -173,7 +170,6 @@ impl Game {
             over: false,
             started: false,
             seed: (env.now().millis() as u32) | 1,
-            due: env.now(),
             pace: step_ms(env),
         };
         g.reset();
@@ -260,19 +256,14 @@ impl Game {
         self.started = true;
         let ms = step_ms(cx.env());
         self.pace = ms;
-        self.due = cx.env().now().add_millis(ms);
-        cx.wake_at(self.due);
+        cx.wake_at(cx.env().now().add_millis(ms));
         cx.request_redraw();
     }
 
-    /// Plans the next step one step after the last one was due. When the
-    /// panel was too slow and that time has passed, it is one step from now.
+    /// Plans the next step one step time from now, once this one is drawn.
     fn plan_next(&mut self, cx: &mut Cx<'_, '_>) {
         let ms = step_ms(cx.env());
-        let now = cx.env().now();
-        let next = self.due.add_millis(ms);
-        self.due = if next.millis() > now.millis() { next } else { now.add_millis(ms) };
-        cx.wake_at(self.due);
+        cx.wake_at(cx.env().now().add_millis(ms));
     }
 }
 
@@ -294,7 +285,6 @@ impl Screen for Game {
 
     fn on_show(&mut self, cx: &mut Cx<'_, '_>) {
         if self.started && !self.over {
-            self.due = cx.env().now();
             self.plan_next(cx);
         }
     }
