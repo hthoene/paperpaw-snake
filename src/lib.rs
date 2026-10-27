@@ -11,14 +11,14 @@ use alloc::string::String;
 
 use core::time::Duration;
 
-use paperpaw_sdk::builtin::{actions, groups, menus};
+use paperpaw_sdk::builtin::{actions, menus};
 use paperpaw_sdk::realtime::ScreenMode;
 use paperpaw_sdk::setting::{Setting, Text};
 use paperpaw_sdk::ui::{self, UiStyle};
 use paperpaw_sdk::{
     ActionSpec, Arg, Canvas, Color, Command, Cx, Direction, Env, Gesture, GestureKind, Handled,
-    Id, Manifest, MenuEntry, Params, Plugin, Rect, RegisterError, Registrar, Screen, ScreenSpec,
-    SettingSpec, Version,
+    Id, Instant, Manifest, MenuEntry, Params, Plugin, Rect, RegisterError, Registrar, Screen, ScreenSpec,
+    SettingGroupSpec, SettingSpec, Version,
 };
 
 pub const PLUGIN: Id = Id::new_static("snake");
@@ -29,23 +29,40 @@ const COLS: i32 = 16;
 const ROWS: i32 = 20;
 /// How fast the snake moves: one of [`SPEEDS`].
 pub const SPEED: Setting<Text> = Setting::new("snake.speed");
-const SPEEDS: [&str; 3] = ["snake.speed.slow", "snake.speed.normal", "snake.speed.fast"];
+const SPEEDS: [&str; 4] = [
+    "snake.speed.slow",
+    "snake.speed.normal",
+    "snake.speed.fast",
+    "snake.speed.turbo",
+];
+
+/// The settings page of the game, under Customise.
+const GROUP: Id = Id::new_static("snake.group");
+static GROUP_SPEC: SettingGroupSpec = SettingGroupSpec::new(GROUP, "snake.group").order(260);
 
 static SETTINGS: [SettingSpec; 1] = [SettingSpec::choice(
     SPEED.static_str(),
     "snake.setting.speed",
     &SPEEDS,
     SPEEDS[1],
-    groups::OTHER,
+    GROUP,
 )];
 
-/// Milliseconds between steps, as the speed setting says.
+/// Milliseconds between steps, as the speed setting says, but never less
+/// than the panel needs to show a frame (as measured on the device), so a
+/// fast setting runs as fast as the panel allows instead of piling up.
 fn step_ms(env: &Env<'_>) -> u64 {
-    match env.settings().read(&SPEED) {
+    let wanted = match env.settings().read(&SPEED) {
         "snake.speed.slow" => 700,
         "snake.speed.fast" => 250,
+        "snake.speed.turbo" => 150,
         _ => 450,
-    }
+    };
+    let panel = env
+        .panel()
+        .fastest()
+        .map_or(0, |(_, time)| time.as_millis() as u64);
+    wanted.max(panel + panel / 4)
 }
 
 #[derive(Debug, Default)]
@@ -75,6 +92,8 @@ impl Plugin for Snake {
             "snake.title",
             Box::new(|env, _| Box::new(Game::new(env))),
         ))?;
+        r.add_setting_group(&GROUP_SPEC)?;
+        r.add_icon(GROUP, Cow::Borrowed("star"))?;
         r.add_settings(&SETTINGS)?;
         r.add_translations(Cow::Borrowed(include_str!("../i18n/en.ini")))?;
         r.add_translations(Cow::Borrowed(include_str!("../i18n/de.ini")))?;
@@ -132,6 +151,11 @@ struct Game {
     over: bool,
     started: bool,
     seed: u32,
+    /// When the next step is due: steps are counted from here, not from
+    /// when the last one was drawn, so drawing time does not add up.
+    due: Instant,
+    /// The step time in milliseconds as set, told to the screen's mode.
+    pace: u64,
 }
 
 impl Game {
@@ -149,6 +173,8 @@ impl Game {
             over: false,
             started: false,
             seed: (env.now().millis() as u32) | 1,
+            due: env.now(),
+            pace: step_ms(env),
         };
         g.reset();
         g
@@ -233,8 +259,20 @@ impl Game {
         }
         self.started = true;
         let ms = step_ms(cx.env());
-        cx.wake_at(cx.env().now().add_millis(ms));
+        self.pace = ms;
+        self.due = cx.env().now().add_millis(ms);
+        cx.wake_at(self.due);
         cx.request_redraw();
+    }
+
+    /// Plans the next step one step after the last one was due. When the
+    /// panel was too slow and that time has passed, it is one step from now.
+    fn plan_next(&mut self, cx: &mut Cx<'_, '_>) {
+        let ms = step_ms(cx.env());
+        let now = cx.env().now();
+        let next = self.due.add_millis(ms);
+        self.due = if next.millis() > now.millis() { next } else { now.add_millis(ms) };
+        cx.wake_at(self.due);
     }
 }
 
@@ -248,6 +286,7 @@ impl Screen for Game {
                 .fastest()
                 .grays(2)
                 .awake_for(Duration::from_secs(300))
+                .frame_every(Duration::from_millis(self.pace))
         } else {
             ScreenMode::new()
         }
@@ -255,8 +294,8 @@ impl Screen for Game {
 
     fn on_show(&mut self, cx: &mut Cx<'_, '_>) {
         if self.started && !self.over {
-            let ms = step_ms(cx.env());
-            cx.wake_at(cx.env().now().add_millis(ms));
+            self.due = cx.env().now();
+            self.plan_next(cx);
         }
     }
 
@@ -266,8 +305,7 @@ impl Screen for Game {
         }
         self.step();
         if !self.over {
-            let ms = step_ms(cx.env());
-            cx.wake_at(cx.env().now().add_millis(ms));
+            self.plan_next(cx);
         }
         cx.request_redraw();
         cx.request_refresh(paperpaw_sdk::RefreshMode::Fast);
