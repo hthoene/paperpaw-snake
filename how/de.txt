@@ -1,0 +1,3 @@
+Das klassische Schlangenspiel. Du findest es im Werkzeugmenü.
+
+OK oder Tippen startet. Links und rechts drehen die Schlange (per Touch auf die linke oder rechte Hälfte tippen, oder in eine Richtung wischen). Friss die Punkte und meide Wände und dich selbst.
