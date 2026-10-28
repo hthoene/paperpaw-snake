@@ -153,6 +153,8 @@ struct Game {
     seed: u32,
     /// The step time in milliseconds as set, told to the screen's mode.
     pace: u64,
+    /// When the next step is due: steps come at a fixed pace.
+    due: paperpaw_sdk::Instant,
 }
 
 impl Game {
@@ -171,6 +173,7 @@ impl Game {
             started: false,
             seed: (env.now().millis() as u32) | 1,
             pace: step_ms(env),
+            due: env.now(),
         };
         g.reset();
         g
@@ -256,14 +259,24 @@ impl Game {
         self.started = true;
         let ms = step_ms(cx.env());
         self.pace = ms;
-        cx.wake_at(cx.env().now().add_millis(ms));
+        self.due = cx.env().now().add_millis(ms);
+        cx.wake_at(self.due);
         cx.request_redraw();
     }
 
-    /// Plans the next step one step time from now, once this one is drawn.
+    /// Plans the next step at a fixed pace: one step time after the last
+    /// one was due, not after it was drawn. When the panel is slower than
+    /// that, the missed steps are dropped, not caught up.
     fn plan_next(&mut self, cx: &mut Cx<'_, '_>) {
         let ms = step_ms(cx.env());
-        cx.wake_at(cx.env().now().add_millis(ms));
+        self.pace = ms;
+        let now = cx.env().now();
+        let mut due = self.due.add_millis(ms);
+        if due.millis() <= now.millis() {
+            due = now.add_millis(ms);
+        }
+        self.due = due;
+        cx.wake_at(due);
     }
 }
 
@@ -271,16 +284,14 @@ impl Screen for Game {
     /// While playing: no page refresh cleaning, the fast refresh, black and
     /// white, and the reader stays awake.
     fn mode(&self) -> ScreenMode {
-        if self.started && !self.over {
-            ScreenMode::new()
-                .cleans_itself()
-                .fastest()
-                .grays(2)
-                .awake_for(Duration::from_secs(300))
-                .frame_every(Duration::from_millis(self.pace))
-        } else {
-            ScreenMode::new()
-        }
+        // The same all the while the screen is open, so that it holds
+        // from the first start on, not only after a restart.
+        ScreenMode::new()
+            .cleans_itself()
+            .fastest()
+            .grays(2)
+            .awake_for(Duration::from_secs(300))
+            .frame_every(Duration::from_millis(self.pace))
     }
 
     fn on_show(&mut self, cx: &mut Cx<'_, '_>) {
