@@ -284,14 +284,18 @@ impl Screen for Game {
     /// While playing: no page refresh cleaning, the fast refresh, black and
     /// white, and the reader stays awake.
     fn mode(&self) -> ScreenMode {
-        // The same all the while the screen is open, so that it holds
-        // from the first start on, not only after a restart.
-        ScreenMode::new()
+        // Read at each input and frame. What the panel is asked for holds
+        // all the while the screen is open; only the pace follows the game.
+        let mode = ScreenMode::new()
             .cleans_itself()
             .fastest()
             .grays(2)
-            .awake_for(Duration::from_secs(300))
-            .frame_every(Duration::from_millis(self.pace))
+            .awake_for(Duration::from_secs(300));
+        if self.started && !self.over {
+            mode.frame_every(Duration::from_millis(self.pace))
+        } else {
+            mode
+        }
     }
 
     fn on_show(&mut self, cx: &mut Cx<'_, '_>) {
