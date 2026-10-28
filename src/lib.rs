@@ -261,7 +261,9 @@ impl Game {
         self.pace = ms;
         self.due = cx.env().now().add_millis(ms);
         cx.wake_at(self.due);
+        // One clean refresh before the round, then the fast ones.
         cx.request_redraw();
+        cx.request_refresh(paperpaw_sdk::RefreshMode::Full);
     }
 
     /// Plans the next step at a fixed pace: one step time after the last
@@ -284,23 +286,23 @@ impl Screen for Game {
     /// While playing: no page refresh cleaning, the fast refresh, black and
     /// white, and the reader stays awake.
     fn mode(&self) -> ScreenMode {
-        // Read at each input and frame. What the panel is asked for holds
-        // all the while the screen is open; only the pace follows the game.
-        let mode = ScreenMode::new()
+        // The same all the while the screen is open, so that it holds
+        // from the first start on, not only after a restart.
+        ScreenMode::new()
             .cleans_itself()
             .fastest()
             .grays(2)
-            .awake_for(Duration::from_secs(300));
-        if self.started && !self.over {
-            mode.frame_every(Duration::from_millis(self.pace))
-        } else {
-            mode
-        }
+            .awake_for(Duration::from_secs(300))
+            .frame_every(Duration::from_millis(self.pace))
     }
 
     fn on_show(&mut self, cx: &mut Cx<'_, '_>) {
         if self.started && !self.over {
             self.plan_next(cx);
+        } else {
+            // Clear what was on the panel before (ghosting).
+            cx.request_redraw();
+            cx.request_refresh(paperpaw_sdk::RefreshMode::Full);
         }
     }
 
@@ -313,7 +315,12 @@ impl Screen for Game {
             self.plan_next(cx);
         }
         cx.request_redraw();
-        cx.request_refresh(paperpaw_sdk::RefreshMode::Mono);
+        // The end of a round is shown clean, the steps fast.
+        cx.request_refresh(if self.over {
+            paperpaw_sdk::RefreshMode::Full
+        } else {
+            paperpaw_sdk::RefreshMode::Mono
+        });
     }
 
     fn draw(&mut self, canvas: &mut Canvas<'_>, env: &Env<'_>) {
